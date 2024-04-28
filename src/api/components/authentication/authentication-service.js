@@ -1,6 +1,16 @@
 const authenticationRepository = require('./authentication-repository');
 const { generateToken } = require('../../../utils/session-token');
 const { passwordMatched } = require('../../../utils/password');
+const { errorResponder, errorTypes } = require('../../../core/errors');
+
+const upayaGagal = {};  //menyimpan catatan upaya login yang gagal
+let waktuCobaLagi = 30*60*1000  //30 menit dalam millidetik
+const max = 2 //batas maksimal upaya gagal
+
+//mengurangi satu menit dari waktu coba lagi setiap menit
+setInterval(() => {
+  waktuCobaLagi -= 60000;
+}, 60000);
 
 /**
  * Check username and password for login.
@@ -10,6 +20,42 @@ const { passwordMatched } = require('../../../utils/password');
  */
 async function checkLoginCredentials(email, password) {
   const user = await authenticationRepository.getUserByEmail(email);
+
+  function gagal_login(email){
+    const currentTime = new Date().getTime();
+
+    if(!upayaGagal[email]){
+      upayaGagal[email] = {
+        upaya: 1,
+        timestamp: currentTime
+      }
+    }else{
+      // Periksa apakah waktu coba lagi sudah lewat
+      if(currentTime - upayaGagal[email].timestamp >= waktuCobaLagi){
+        // Reset upaya login yang gagal dan perbarui timestamp
+        upayaGagal[email].upaya = 1;
+        upayaGagal[email].timestamp = currentTime;
+      } else{
+        upayaGagal[email].upaya++;
+      }
+    } 
+
+    if(upayaGagal[email].upaya >= max){
+      return  true;
+    }
+
+    return false;
+  }
+
+  // Periksa apakah email telah mencapai batas upaya login yang gagal
+  //akan muncul pesan try again in (berapa menit lagi, akan kurang satu menit per menit) menggunakan setInterval
+  if(gagal_login(email)){
+    const remaining = Math.ceil(waktuCobaLagi / (1000*60));
+    throw errorResponder(
+      errorTypes.FORBIDDEN,
+      `Too many failed login attempt. Try again in ${remaining} minuters`
+    )
+  }
 
   // We define default user password here as '<RANDOM_PASSWORD_FILTER>'
   // to handle the case when the user login is invalid. We still want to
